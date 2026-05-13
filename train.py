@@ -44,10 +44,10 @@ def train_model(
         pad_if_needed: bool = False,
         num_workers: int = 4,
 
-        dir_img: str = 'public_datasets/dynamicWorld/officialDatasets_in_China/train_reflectance',
-        dir_mask: str = 'public_datasets/dynamicWorld/officialDatasets_in_China/train_mask', 
-        dir_checkpoint: str = 'UNet_test/checkpoints',
-        dir_tensorboard: str = 'UNet_test/unet_experiment',
+        dir_img: str = None,
+        dir_mask: str = None, 
+        dir_checkpoint: str = 'UNet/checkpoints',
+        dir_tensorboard: str = 'UNet/unet_experiment',
 
         weight_decay: float = 1e-8,
         momentum: float = 0.999,
@@ -96,10 +96,6 @@ def train_model(
         Mixed Precision: {amp}
     ''')
 
-    # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
-    # optimizer = optim.RMSprop(model.parameters(),
-    #                           lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
-
     optimizer = optim.Adam(
         model.parameters(),
         lr=learning_rate,
@@ -118,35 +114,12 @@ def train_model(
         epoch_loss = 0
         with tqdm(total=n_train, desc=f'Epoch {epoch - start_epoch + 1}/{epochs}', unit='img') as pbar:
             for images, true_masks in train_loader:
-                # if global_step == 0:
-                #     # 保存每个batch的images和true_masks为tif图像到本地磁盘
-                #     batch_save_dir = "/home/wangyan/projects/CSM/UNet_test/debug_patches"
-                #     os.makedirs(batch_save_dir, exist_ok=True)
-                #     images_np = images.cpu().numpy()  # (B, C, H, W)
-                #     masks_np = true_masks.cpu().numpy()  # (B, H, W)
-                #     for i in range(images_np.shape[0]):
-                #         img_path = os.path.join(batch_save_dir, f"image_step{global_step}_idx{i}.tif")
-                #         mask_path = os.path.join(batch_save_dir, f"mask_step{global_step}_idx{i}.tif")
-                #         # tifffile expects (H, W, C) for multi-band images
-                #         tifffile.imwrite(img_path, images_np[i])
-                #         tifffile.imwrite(mask_path, masks_np[i].astype(np.uint8))
                 assert images.shape[1] == model.n_channels, \
                     f'Network has been defined with {model.n_channels} input channels, ' \
                     f'but loaded images have {images.shape[1]} channels. Please check that ' \
                     'the images are loaded correctly.'
                 
                 images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
-                # # 膨胀处理：对每个batch的每张mask，值为2的像素做膨胀
-                # true_masks_np = true_masks.cpu().numpy()  # (B, H, W)
-                # dilated_masks = []
-                # for mask in true_masks_np:
-                #     mask2 = (mask == 2)
-                #     dilated2 = binary_dilation(mask2, iterations=1)  # 可调整iterations
-                #     # 保持原有类别，只有2类被膨胀
-                #     new_mask = mask.copy()
-                #     new_mask[dilated2] = 2
-                #     dilated_masks.append(new_mask)
-                # true_masks = torch.from_numpy(np.stack(dilated_masks)).to(true_masks.device, dtype=torch.long)
                 true_masks = true_masks.to(device=device, dtype=torch.long)
 
                 with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
@@ -162,11 +135,6 @@ def train_model(
                             class_idx=2  # settlement class index
                         )
                         loss += 1 - dice_cls2
-                        # loss += dice_loss( #dice loss = 1 - dice_coeff
-                        #     F.softmax(masks_pred, dim=1).float(),
-                        #     F.one_hot(true_masks, model.n_classes).permute(0, 3, 1, 2).float(),
-                        #     multiclass=True
-                        # )
 
                 optimizer.zero_grad(set_to_none=True)
                 grad_scaler.scale(loss).backward()
@@ -242,15 +210,14 @@ def get_args():
 
 
 if __name__ == '__main__':
-    # 用这个替代 get_args()
     # ====== VSCode调试用参数设置 ======
     config = Namespace(
         #
         config_infoNote = 'use CSMdataset train Unet\n',
-        dir_img = r'my_datasets\2_datasets_from_GhsDdWsfWc_4rasterization\selected_200_shp\4-reflectance', # 影像数据目录
-        dir_mask = r'my_datasets\2_datasets_from_GhsDdWsfWc_4rasterization\selected_200_shp\4-mask_dwPossiblebuiltupManualComposited_allTouchedFalse', # 标签数据目录
-        dir_checkpoint = r'UNet_test\checkpoints\China_30m_CSMdataset_stdUnet_checkpoints10', # model保存目录
-        dir_tensorboard = r'UNet_test\unet_experiment\China_30m_CSMdataset_stdUnet_experiments10', # TensorBoard日志目录
+        dir_img = r'my_datasets\2_datasets\4-reflectance', # 影像数据目录
+        dir_mask = r'my_datasets\2_datasets\4-mask', # 标签数据目录
+        dir_checkpoint = r'UNe\checkpoints\China_30m_CSMdataset_checkpoints', # model保存目录
+        dir_tensorboard = r'UNet\unet_experiment\China_30m_CSMdataset_experiments', # TensorBoard日志目录
 
         load_model = False, # 是否加载预训练模型
         start_epoch = 1, # start from 1
@@ -275,10 +242,6 @@ if __name__ == '__main__':
         
     )
     # print(config.dir_img)
-    
-    # ==================================
-    # 如果需要从命令行获取参数，可以使用以下代码
-    # args = get_args()
 
     # 保存config参数到config_info.txt
     config_path = os.path.join(config.dir_checkpoint, "config_info.txt")
@@ -325,11 +288,6 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Using device {device}')
 
-    # Change here to adapt to your data
-    # n_channels=3 for RGB images
-    # n_classes is the number of probabilities you want to get per pixel
-    # model = UNet(n_channels=model_args.channels, n_classes=model_args.classes, bilinear=model_args.bilinear)
-    # use attention UNet in standard_UNet.py
     model = standard_UNet(n_channels = config.channels_count, 
                                    n_classes = config.classes)
     model = model.to(memory_format=torch.channels_last)
